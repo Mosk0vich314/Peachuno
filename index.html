@@ -55,6 +55,7 @@ h1{font-family:var(--disp);font-weight:800;margin:0;line-height:1.05}
 .hero .card:nth-child(1){transform:rotate(-13deg) translateY(6px)}
 .hero .card:nth-child(3){transform:rotate(13deg) translateY(6px)}
 .hero .card:nth-child(2){z-index:2}
+.code{font-family:var(--disp);font-weight:800;font-size:44px;letter-spacing:.22em;text-align:center;padding:14px;border-radius:20px;background:rgba(255,255,255,.1);border:2px dashed rgba(255,255,255,.28)}
 .opt{display:flex;align-items:flex-start;gap:12px;padding:12px 14px;border-radius:16px;background:rgba(255,255,255,.07);text-align:left;width:100%}
 .opt b{font-family:var(--disp);font-size:15px;display:block}
 .opt span{font-size:12.5px;color:var(--mute);line-height:1.4}
@@ -141,6 +142,10 @@ h1{font-family:var(--disp);font-weight:800;margin:0;line-height:1.05}
     <button class="pill" id="btnGo">Crea una partita</button>
     <button class="pill ghost" id="btnResume" style="display:none">Riprendi l’ultima partita</button>
   </div>
+  <div class="stack" id="joinBox">
+    <input id="codeIn" placeholder="CODICE" maxlength="4" autocomplete="off" autocapitalize="characters" style="text-transform:uppercase;letter-spacing:.3em">
+    <button class="pill ghost" id="btnJoin">Entra con il codice</button>
+  </div>
 </div></div>
 
 <div class="screen" id="s-lobby"><div class="pad">
@@ -149,6 +154,7 @@ h1{font-family:var(--disp);font-weight:800;margin:0;line-height:1.05}
     <p class="sub" style="margin-top:6px" id="lobbyHint"></p>
   </div>
   <div id="inviteBox" class="stack">
+    <div class="code" id="lobbyCode">----</div>
     <button class="pill" id="btnInvite">Manda il link</button>
     <div class="link" id="linkBox"></div>
   </div>
@@ -247,6 +253,9 @@ const C = i => CARDS[i];
 const $ = s => document.querySelector(s);
 const shuffle = a => { for (let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]] } return a };
 const rnd = n => Array.from({length:n}, () => 'abcdefghjkmnpqrstuvwxyz23456789'[Math.floor(Math.random()*31)]).join('');
+const ABC = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';        // senza O/0 e I/1
+const newCode = () => Array.from({length:4}, () => ABC[Math.floor(Math.random()*32)]).join('');
+const topicOf = code => 'peachuno-' + code.toLowerCase();
 let toastT;
 function toast(m){ const t=$('#toast'); t.textContent=m; t.classList.add('on'); clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove('on'),2800) }
 function openSheet(id){ $('#'+id).classList.add('on') }
@@ -368,17 +377,22 @@ function push(){ lastSync = Date.now(); Net.send(JSON.stringify(S)) }
 function persist(){ if (S) store.set('game', S) }
 
 /* stato in arrivo dall'altro telefono */
+let joining = false, joinPool = [];
 function onRemote(text){
   let r; try { r = JSON.parse(text) } catch(e){ return }
-  if (!r || !r.code || (S && r.code !== S.code)) return;
+  if (!r || !r.gid) return;
+  if (S && r.gid !== S.gid) return;
   if (r.ping){                       // battito: serve solo a scoprire chi è indietro
     if (!S || r.by === ME.id) return;
     if (r.v < S.v) push();
     else if (r.v > S.v) ping(true);
     return;
   }
+  if (!S){
+    if (joining){ joinPool.push(r); return }   // più partite sullo stesso codice: sceglie la più recente
+    S = r; persist(); render(); return;
+  }
   lastSync = Date.now();
-  if (!S){ S = r; persist(); render(); return }
   const newer = r.v > S.v || (r.v === S.v && r.ts > S.ts) || (r.v === S.v && r.ts === S.ts && String(r.by) > String(S.by));
   if (newer){ S = r; persist(); render(); return }
   if (r.v < S.v && Date.now() - lastRebroadcast > 3000){   // l'altro è indietro: rimandagli il mio
@@ -394,12 +408,16 @@ function ping(now){
   if (!S || !Net.topic) return;
   if (!now && Date.now() - lastPing < 4500) return;
   lastPing = Date.now();
-  Net.send(JSON.stringify({code:S.code, v:S.v, by:ME.id, ping:1}));
+  Net.send(JSON.stringify({gid:S.gid, v:S.v, by:ME.id, ping:1}));
 }
 setInterval(() => {
   if (!S || !Net.topic || document.hidden) return;
   if (S.phase && S.phase.t === 'cancel' && S.phase.until < Date.now() && S.phase.by === myIdx())
     return commit(s => (s.phase && s.phase.t === 'cancel') ? resolveCancel(s, null) : false);
+  if (S.status === 'lobby' && !S.players[1]){        // invito ancora valido: tienilo vivo
+    if (Date.now() - lastSync > 12000) push();
+    return;
+  }
   if (Date.now() - lastSync > 9000) ping(false);
 }, 4000);
 
@@ -659,8 +677,9 @@ function renderLobby(){
   $('#lobbyTitle').textContent = full ? 'Pronti' : (host ? 'Invita la tua ragazza' : 'Ci siamo quasi');
   $('#lobbyHint').textContent = full
     ? (host ? 'Scegli le regole e via.' : 'Aspetta che ' + S.players[0].name + ' faccia partire la partita.')
-    : (host ? 'Mandale questo link: le basta aprirlo, niente da installare e nessun account.' : 'Sto entrando…');
+    : (host ? 'Mandale il link, oppure dettale il codice qui sopra se ha già aperto il sito.' : 'Sto entrando…');
   $('#inviteBox').style.display = (host && !full) ? '' : 'none';
+  $('#lobbyCode').textContent = S.code;
   $('#linkBox').textContent = shareLink();
   $('#lobbyPlayers').innerHTML = [0,1].map(i => {
     const p = S.players[i];
@@ -686,7 +705,8 @@ function renderLobby(){
 const byArt = a => CARDS.findIndex(c => c.art === a);
 $('#hero').innerHTML = [byArt('n7_red'), byArt('jester'), byArt('n2_blue')].map(i => cardHTML(i)).join('');
 
-let joinCode = (location.hash.match(/g=([a-z0-9]+)/) || [])[1] || null;
+let joinCode = (location.hash.match(/g=([A-Za-z0-9]{4})/) || [])[1];
+joinCode = joinCode ? joinCode.toUpperCase() : null;
 
 function ensureMe(){
   const n = $('#nameIn').value.trim();
@@ -699,12 +719,12 @@ function ensureMe(){
 $('#btnGo').onclick = () => {
   if (!ensureMe()) return;
   if (joinCode) return joinGame(joinCode);
-  S = { v:1, ts:Date.now(), by:ME.id, code: rnd(9), status:'lobby',
+  S = { v:1, ts:Date.now(), by:ME.id, code: newCode(), gid: rnd(10), status:'lobby',
     players:[{id:ME.id, name:ME.name, hand:[]}, null],
     deck:[], discard:[], color:'green', turn:0, pending:0, pendingType:null,
     uno:null, log:'', flash:null, winner:null, revealed:[], phase:null, jv:{},
     opts:{specials:true, noStops:true, stack:true, drawUntil:false, sevenZero:false} };
-  persist(); Net.start(S.code); render();
+  persist(); Net.start(topicOf(S.code)); render();
   setTimeout(push, 400);
 };
 
@@ -715,28 +735,35 @@ function joinGame(code){
   $('#inviteBox').style.display = 'none';
   $('#lobbyPlayers').innerHTML = ''; $('#lobbyOpts').innerHTML = '';
   $('#btnStart').style.display = 'none';
-  S = null; Net.start(code);
-  let tries = 0;
+  S = null; joining = true; joinPool = [];
+  Net.start(topicOf(code));
+  let waited = 0;
   const t = setInterval(() => {
-    if (S){
-      clearInterval(t);
-      if (!S.players.some(p => p && p.id === ME.id)){
-        if (S.players[1]){ toast('La partita è già in due'); Net.stop(); S = null; show('s-home'); return }
-        commit(s => { s.players[1] = {id:ME.id, name:ME.name, hand:[]} });
-      } else render();
-      return;
+    waited += 600;
+    if (!((joinPool.length && waited >= 1800) || waited >= 9000)) return;
+    clearInterval(t); joining = false;
+    if (!joinPool.length){
+      toast('Nessuna partita con questo codice');
+      Net.stop(); location.hash = ''; joinCode = null; boot(); return;
     }
-    if (++tries > 14){
-      clearInterval(t);
-      toast('Non trovo la partita: fattelo rimandare');
-      Net.stop(); show('s-home');
-    }
-  }, 700);
+    joinPool.sort((a, b) => b.ts - a.ts);
+    S = joinPool[0]; joinPool = [];
+    if (S.players.some(p => p && p.id === ME.id)){ persist(); render(); return }
+    if (S.players[1]){ toast('La partita è già in due'); Net.stop(); S = null; boot(); return }
+    commit(s => { s.players[1] = {id:ME.id, name:ME.name, hand:[]} });
+  }, 600);
 }
+
+$('#btnJoin').onclick = () => {
+  const code = $('#codeIn').value.trim().toUpperCase();
+  if (code.length !== 4) return toast('Il codice ha 4 caratteri');
+  if (!ensureMe()) return;
+  joinGame(code);
+};
 
 function invite(){
   const url = shareLink();
-  const txt = 'Giochiamo a PeachUNO 🐾 ' + url;
+  const txt = 'Giochiamo a PeachUNO 🐾 (codice ' + S.code + ') ' + url;
   if (navigator.share) navigator.share({title:'PeachUNO', text:txt}).catch(()=>{});
   else if (navigator.clipboard) navigator.clipboard.writeText(url).then(()=>toast('Link copiato')).catch(()=>toast(url));
   else toast(url);
@@ -857,9 +884,11 @@ document.addEventListener('visibilitychange', () => {
 function boot(){
   if (ME.name) $('#nameIn').value = ME.name;
   const saved = store.get('game');
-  joinCode = (location.hash.match(/g=([a-z0-9]+)/) || [])[1] || null;
+  joinCode = (location.hash.match(/g=([A-Za-z0-9]{4})/) || [])[1];
+  joinCode = joinCode ? joinCode.toUpperCase() : null;
+  $('#joinBox').style.display = joinCode ? 'none' : '';
   if (joinCode){
-    $('#homeSub').textContent = 'Sei stato invitato a una partita. Scrivi il tuo nome per entrare.';
+    $('#homeSub').textContent = 'Sei stato invitato alla partita ' + joinCode + '. Scrivi il tuo nome per entrare.';
     $('#btnGo').textContent = 'Entra nella partita';
     if (ME.name){ ensureMe(); return joinGame(joinCode) }
     show('s-home'); return;
@@ -868,7 +897,7 @@ function boot(){
   $('#btnGo').textContent = 'Crea una partita';
   if (saved && saved.code){
     $('#btnResume').style.display = '';
-    $('#btnResume').onclick = () => { S = saved; Net.start(S.code); render(); setTimeout(push, 400) };
+    $('#btnResume').onclick = () => { S = saved; Net.start(topicOf(S.code)); render(); setTimeout(push, 400) };
   }
   show('s-home');
 }
