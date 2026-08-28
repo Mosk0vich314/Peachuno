@@ -11,7 +11,7 @@ per pubblicare: si carica `index.html` e basta.
 **`index.html` deve restare un unico file autosufficiente.** Niente bundler,
 niente `node_modules`, niente file esterni: HTML, CSS, JavaScript e tutte le 60
 immagini delle carte (base64 inline) stanno lì dentro. È la ragione per cui il
-file pesa ~430 KB, ed è voluto: si scarica una volta e resta in cache.
+file pesa ~460 KB, ed è voluto: si scarica una volta e resta in cache.
 
 Le uniche risorse esterne sono i font di Google, con fallback di sistema se non
 caricano.
@@ -19,12 +19,22 @@ caricano.
 ## Struttura
 
 ```
-index.html          il gioco: unico file da pubblicare
-sheets/             le quattro foto originali del mazzo (griglie 4×4)
-tools/build_cards.py   ritaglia le carte dai fogli e le reinietta in index.html
+index.html             il gioco: unico file da pubblicare
+grid/                  le quattro foto originali del mazzo (sheet-a … sheet-d)
+assets/cards/          le 62 carte ritagliate, una per file: si possono ritoccare a mano
+assets/contact-sheet.png  provino di tutte le carte, per controllarle a colpo d'occhio
+assets/assets.json     le stesse carte compresse (rigenerabile, non è una sorgente)
+tools/cut_cards.py     ritaglia le carte dai fogli e riempie assets/cards/
+tools/build_cards.py   prende assets/cards/ e lo reinietta in index.html
 tools/test_game.py     due browser finti che giocano una partita intera
-tools/assets.json      immagini estratte (rigenerabile, non è una sorgente)
+tools/test_rules.py    le regole della casa, una per una, a stato forzato
+tools/fake_relay.py    il relay finto in memoria che i due test si scambiano
 ```
+
+Le carte stanno in `index.html` in base64 perché lo impone la regola numero uno,
+ma **la sorgente da cui guardare e modificare è `assets/cards/`**: un PNG per
+carta, con il nome della carta. Quello dentro l'HTML è solo il risultato
+compilato.
 
 ## Le regole della casa
 
@@ -36,18 +46,28 @@ quindi **non "correggerle" verso le regole ufficiali.**
   **fuori turno** per annullare l'effetto di una carta speciale appena giocata.
   Chi annulla ci rimette il proprio turno: la carta NO! finisce sugli scarti (e
   ne cambia il colore) e rigioca chi aveva lanciato la speciale.
+  **Anche un NO! si annulla con un NO!**, e si va avanti finché a una delle due
+  restano NO! in mano. Alla fine conta solo la parità: un numero **dispari** di
+  NO! lascia annullata la carta di partenza, uno **pari** la fa valere lo stesso.
 - **Rivela** (i gatti col maglione, che nell'Uno normale sarebbe "cambio giro").
   Non inverte niente. Chi la gioca sceglie **al buio** una posizione nella mano
   avversaria: quella carta resta scoperta per lui da lì in avanti.
 - **Armageddon** (angelo e diavolo insieme, sfondo scuro, ×2 nel mazzo). Chi la
   gioca mette Angioletto e Diavoletto coperti, uno davanti a sé e uno davanti
-  all'altra. L'altra ne sceglie uno. Chi si ritrova il **Diavoletto pesca 8
+  all'altra, e **sceglie lui quale va dove**: l'altra vede due carte girate e
+  basta, quindi il bluff è tutto lì. Poi l'altra ne sceglie uno. Chi si ritrova il **Diavoletto pesca 8
   carte**, chi ha l'**Angioletto sceglie il colore**. Poi le due carte tornano da
   parte. **Angioletto e Diavoletto non sono nel mazzo**, sono due segnalini
   riusati a ogni Armageddon.
 - **Giullare** (×2 nel mazzo). Vale come qualunque carta numero di qualunque
   colore: chi la gioca dichiara numero e colore.
-- **UNO**: 5 secondi per dirlo, poi l'altra può beccarti e ti fa pescare 2.
+- **UNO**: 5 secondi per dirlo, poi peschi 2. La penalità **scatta da sola alla
+  scadenza**, non serve che l'altra se ne accorga: il pulsante "Beccala!" serve
+  solo ad anticiparla mentre i secondi corrono. Ad applicarla è il telefono
+  dell'**altra** (così non basta chiudere l'app per non pescare); se lei ha il
+  telefono in tasca ci pensa il battito, con qualche secondo di ritardo.
+- **Pescare**: si tocca il mazzo. Se la carta pescata è giocabile **non salti il
+  turno**: puoi giocare quella (solo quella) oppure tenertela e passare.
 
 Mazzo: 108 carte classiche + 2 Armageddon + 2 Giullare = **112**.
 
@@ -59,6 +79,10 @@ darli per buoni:
    sceglie lei il colore e l'altro pesca 8), altrimenti la scelta non sarebbe
    una scommessa.
 2. Che annullare con il NO! costi il turno è una mia scelta.
+3. Che la catena di NO! si risolva a parità (dispari annulla, pari no) è una mia
+   scelta: lui ha detto solo che un NO! si può negare con un NO!.
+4. Che dopo aver pescato si possa giocare **solo** la carta appena pescata, e non
+   un'altra qualsiasi, è la regola dell'Uno normale — ma non l'abbiamo detta.
 
 Le regole opzionali (cumulo +2/+4, pesca finché non puoi, 7-0, il NO! che ferma
 anche le carte pesca, carte speciali sì/no) si accendono nella lobby e vivono in
@@ -78,19 +102,44 @@ ritaglio prendeva il rettangolo di ingombro del personaggio, che non coincide
 con la sua posizione dentro l'ovale, e i gatti venivano fuori spostati e
 tagliati. **Non rifarlo.** Se serve una carta nuova, si ritaglia dal foglio.
 
-`tools/build_cards.py` fa tutto: ogni foto è una griglia 4×4, ritaglia le 16
-celle, toglie il margine bianco e il filetto nero, e riconosce il colore di ogni
-carta **contando i pixel** vicini ai quattro colori di riferimento (nei fogli
-l'ordine dei colori cambia da riga a riga, quindi non si può scriverlo a mano).
-Poi scrive `assets.json` e lo reinietta nella riga `const ASSETS_RAW = …` di
-`index.html`.
+Il ritaglio è in due passaggi, apposta: **`cut_cards.py` legge i fogli e riempie
+`assets/cards/`, `build_cards.py` legge solo `assets/cards/`.** Così puoi aprire
+un PNG, sistemartelo a mano, e rimetterlo nel gioco senza che il ritaglio
+automatico te lo ricalpesti.
 
 ```
-cd tools && python3 build_cards.py     # richiede pillow, numpy, scipy
+cd tools && python3 cut_cards.py       # fogli → assets/cards/  (pillow, numpy, scipy)
+cd tools && python3 build_cards.py     # assets/cards/ → index.html  (pillow)
 ```
 
-Stampa quante carte ha estratto e quali mancano: devono essere 62 e "mancanti:
-nessuna".
+`cut_cards.py` scrive **solo le carte che mancano**: quelle già in
+`assets/cards/` le lascia stare, così i ritocchi a mano sopravvivono. Per rifare
+tutto da capo serve `--force`. Stampa quante carte ha trovato: devono essere 62 e
+"mancanti: nessuna". Riscrive anche `assets/contact-sheet.png`, che è il modo
+più veloce per accorgersi di un ritaglio storto.
+
+**I fogli non sono una griglia regolare**, ed è questo il punto delicato. Le
+carte sono scansionate storte di qualche pixel, i margini fra una e l'altra
+cambiano, e su alcuni fogli restano le linee guida della stampa. Un tentativo
+precedente divideva l'immagine in sedici rettangoli uguali: tagliava via un pezzo
+di carta da una parte e faceva entrare la vicina dall'altra. **Non rifarlo.**
+Adesso ogni carta viene *trovata*: si marca tutto quello che non è carta bianca,
+si prendono le isole di pixel collegate e si tengono quelle grandi quanto una
+carta (~298×464). Le linee guida sono sottili e si scartano da sole; se una tocca
+il bordo di una carta, si taglia guardando quali righe e colonne dell'isola sono
+piene quasi per intero. Se un foglio non dà esattamente 16 carte lo script si
+ferma invece di indovinare.
+
+Il colore di ogni carta lo decide `colour_of` **contando i pixel** vicini ai
+quattro colori di riferimento: nei fogli l'ordine dei colori cambia da riga a
+riga, quindi non si può scrivere a mano.
+
+Tutte le carte escono a **298×464**, ed è la stessa proporzione che `.card` usa
+nel CSS (`aspect-ratio:.642`). Le due cose vanno tenute insieme: `.card` ha
+`object-fit:cover`, quindi se le immagini hanno una proporzione diversa dal
+riquadro è il browser a ritagliarle — ed è un ritaglio che nel provino non si
+vede. Anche `border-radius:7.5%/4.8%` è preso dagli angoli stampati sulle carte
+vere.
 
 ## Come si parlano i due telefoni
 
@@ -123,6 +172,27 @@ sotto soglia. `Net.send` rifiuta i messaggi oltre 3900 byte.
 Lo stato locale sta in `localStorage` (`uno_me`, `uno_game`), così si riprende
 una partita riaprendo il sito.
 
+## Pubblicare
+
+Si pubblica con un `git push` sul ramo `main`: GitHub Pages serve il repo così
+com'è, non c'è niente da compilare. La pagina è
+<https://mosk0vich314.github.io/Peachuno/>.
+
+**Il problema non è pubblicare, è la cache.** GitHub Pages manda l'HTML con
+`Cache-Control: max-age=600`, quindi per una decina di minuti il vecchio file
+resta valido; e se il sito è stato aggiunto alla schermata Home dell'iPhone
+(`apple-mobile-web-app-capable` è acceso) può restarci molto più a lungo. Siccome
+il gioco è un unico file, "vecchio file" vuol dire *tutto* vecchio: regole,
+carte, interfaccia.
+
+Per questo c'è `const VERSION` in cima allo script, che si legge nel menu della
+partita: **va cambiata a ogni pubblicazione**, ed è il modo per capire al volo se
+i due telefoni stanno girando la stessa versione. Il pulsante **Aggiorna il
+gioco** nel menu ricarica con una query sempre diversa
+(`?r=<timestamp>`), che è un indirizzo che la cache non ha mai visto: è la via
+sicura per farsi ridare il file per intero senza svuotare la cache a mano.
+L'hash `#g=…` viene mantenuto, quindi non si perde la partita in corso.
+
 ## Struttura del codice in index.html
 
 Nell'ordine, dentro l'unico `<script>`:
@@ -132,8 +202,8 @@ Nell'ordine, dentro l'unico `<script>`:
 3. utility, `store` (localStorage)
 4. `Net` — WebSocket + pubblicazione
 5. stato: `ME`, `S`, `myIdx()`, `isMine()`
-6. **motore**: `playable`, `playFromHand`, `applyCard`, `doDraw`, `endTurn`,
-   `resolveCancel/Arma/ArmaColor/Reveal`
+6. **motore**: `playable`, `playFromHand`, `applyCard`, `doDraw`, `passDraw`,
+   `endTurn`, `settleCancel`, `resolveCancel/ArmaPlace/Arma/ArmaColor/Reveal`
 7. `commit(fn)` — applica la mossa allo stato locale, incrementa `S.v`, salva e
    pubblica. **Ogni modifica di stato passa da qui.** Se `fn` ritorna `false` la
    mossa è rifiutata e non si pubblica niente.
@@ -141,10 +211,15 @@ Nell'ordine, dentro l'unico `<script>`:
 9. render: `cardHTML`, `render`, `renderPhase`, `renderLobby`, `renderRules`
 10. handler dei click, `boot()`
 
-Le mosse che richiedono più passaggi (annullare con il NO!, scegliere una delle
-due carte dell'Armageddon, scegliere il colore con l'Angioletto, scegliere quale
-carta rivelare) sono modellate come **fasi**: `S.phase = {t:'cancel'|'arma'|
-'armaColor'|'reveal', …}`. Finché c'è una fase attiva il turno non avanza e
+Le mosse che richiedono più passaggi (annullare con il NO!, posare i due
+segnalini dell'Armageddon e poi sceglierne uno, scegliere il colore con
+l'Angioletto, scegliere quale carta rivelare) sono modellate come **fasi**:
+`S.phase = {t:'cancel'|'armaPlace'|'arma'|'armaColor'|'reveal', …}`.
+La fase `cancel` si porta dietro `orig`/`origBy`/`choice` (la carta contestata) e
+`depth` (quanti NO! sono stati giocati finora), perché la catena di NO! si
+risolve alla fine guardando la parità di `depth`.
+`S.drawn` è la carta appena pescata: finché non è `null` il turno non è finito,
+`playable()` lascia giocare solo quella, e `doDraw` rifiuta una seconda pescata. Finché c'è una fase attiva il turno non avanza e
 `playable()` ritorna sempre `false`. Chi deve agire è indicato dentro la fase,
 non da `S.turn`.
 
@@ -152,10 +227,12 @@ non da `S.turn`.
 
 ```
 cd tools && python3 test_game.py       # richiede playwright + chromium
+cd tools && python3 test_rules.py
 ```
 
-Apre due browser separati (due telefoni), sostituisce WebSocket e `fetch` con un
-relay finto in memoria, e verifica:
+`test_game.py` guarda la **sincronizzazione**: apre due browser separati (due
+telefoni), sostituisce WebSocket e `fetch` con un relay finto in memoria
+(`fake_relay.py`), e verifica:
 
 - ingresso digitando il codice, avvio, **partita intera** giocata a mosse casuali
 - che i due stati restino identici fino alla fine
@@ -167,9 +244,13 @@ relay finto in memoria, e verifica:
 Stampa anche la dimensione del messaggio più grande. Va fatto girare dopo ogni
 modifica al motore o allo stato.
 
-Per provare rapidamente una regola specifica conviene forzare la mano con
-`commit(s => { ... })` da `page.evaluate`, come fa il test per pescare carte
-precise dal mazzo.
+`test_rules.py` guarda invece le **regole**, ed è lì che va aggiunta una prova
+quando si tocca il motore. Una partita a mosse casuali non garantisce niente su
+una regola precisa (magari quella carta non è mai uscita), quindi ogni prova si
+costruisce lo stato che le serve con `commit(s => { ... })` da `page.evaluate`,
+fa la mossa e controlla il risultato. Oggi copre: pescare col mazzo e giocare la
+carta pescata (o passare), la catena di NO! a uno e a due, e l'Armageddon con
+tutte e due le scelte di posa.
 
 Quello che il test **non** copre: la connessione vera a ntfy.sh. Quella si
 verifica solo aprendo il sito in due; se il pallino in alto resta rosso, il

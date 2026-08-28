@@ -1,57 +1,6 @@
 from playwright.sync_api import sync_playwright
+from fake_relay import BUS, DROP, STUB, FILE, mk
 
-BUS = {}   # topic -> list of messages
-DROP = {'n': 0}
-
-def pub(t, m):
-    if DROP['n'] > 0:
-        DROP['n'] -= 1
-        return
-    BUS.setdefault(t, []).append(m)
-
-STUB = """
-class FakeWS {
-  constructor(url){
-    this.url = url; this.readyState = 0;
-    this.topic = url.match(/\\/\\/[^/]+\\/([^/]+)\\/ws/)[1];
-    this.idx = 0;
-    setTimeout(() => { this.readyState = 1; if (this.onopen) this.onopen(); this.loop() }, 30);
-  }
-  async loop(){
-    while (this.readyState === 1){
-      const arr = await window.__sub(this.topic, this.idx);
-      for (const m of arr){
-        this.idx++;
-        if (this.onmessage) this.onmessage({data: JSON.stringify({event:'message', topic:this.topic, message:m})});
-      }
-      await new Promise(r => setTimeout(r, 100));
-    }
-  }
-  close(){ this.readyState = 3; if (this.onclose) this.onclose() }
-}
-window.WebSocket = FakeWS;
-const _f = window.fetch;
-window.fetch = (url, opt) => {
-  if (typeof url === 'string' && url.indexOf('ntfy.sh') >= 0 && opt && opt.method === 'POST'){
-    window.__pub(url.split('/').pop(), opt.body);
-    return Promise.resolve(new Response(''));
-  }
-  return _f(url, opt);
-};
-"""
-
-def mk(ctx, url):
-    pg = ctx.new_page()
-    pg.expose_function('__pub', pub)
-    pg.expose_function('__sub', lambda t, i: BUS.get(t, [])[i:])
-    pg.add_init_script(STUB)
-    pg.goto(url)
-    pg.set_viewport_size({'width': 390, 'height': 844})
-    pg.wait_for_timeout(500)
-    return pg
-
-import os
-FILE = 'file://' + os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'index.html')
 with sync_playwright() as p:
     b = p.chromium.launch()
     ctxA = b.new_context(viewport={'width':390,'height':844}, device_scale_factor=2)
@@ -86,6 +35,8 @@ with sync_playwright() as p:
           const nos = S.players[mi].hand.filter(c => C(c).kind === 'skip');
           return commit(s => resolveCancel(s, (nos.length && Math.random() < 0.5) ? nos[0] : null)) || 'cancel';
         }
+        if (ph.t === 'armaPlace' && mi === ph.by)
+          return commit(s => resolveArmaPlace(s, Math.random() < 0.5 ? 'angel' : 'devil')) || 'armaPlace';
         if (ph.t === 'arma' && mi === 1 - ph.by) return commit(s => resolveArma(s, Math.round(Math.random()))) || 'arma';
         if (ph.t === 'armaColor' && mi === ph.who) return commit(s => resolveArmaColor(s, 'blue')) || 'armaColor';
         if (ph.t === 'reveal' && mi === ph.by){
@@ -95,8 +46,11 @@ with sync_playwright() as p:
         return 'attendo';
       }
       if (!isMine()) return 'non tocca a me';
+      // ho appena pescato: o gioco quella carta o passo
+      if (S.drawn != null && Math.random() < 0.35) return commit(s => passDraw(s)) || 'passa';
       const ok = S.players[mi].hand.filter(c => playable(c, S));
-      if (!ok.length) return commit(s => doDraw(s)) || 'pesca';
+      if (!ok.length) return S.drawn != null ? (commit(s => passDraw(s)) || 'passa')
+                                             : (commit(s => doDraw(s)) || 'pesca');
       const ci = ok[Math.floor(Math.random()*ok.length)], k = C(ci).kind;
       const ch = k === 'jester' ? {color:'blue', rank:3}
                : (C(ci).color === null && k !== 'duel') ? {color:'blue'} : null;
