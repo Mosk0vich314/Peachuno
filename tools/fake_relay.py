@@ -7,29 +7,49 @@ test_rules.py (le regole della casa).
 
 import os
 
-BUS = {}          # topic -> lista di messaggi
-DROP = {'n': 0}   # quante prossime pubblicazioni buttare via, per il test della mossa persa
-FULL = {'on': False}   # il relay ha finito i messaggi: risponde 429 a tutto
+# Il gioco parla con piu' relay insieme, quindi qui ognuno ha il suo bus: la
+# chiave e' 'host/topic'. Contare i messaggi su un bus solo da' il numero che
+# conta davvero, cioe' quanti ne vede UN relay (e' li' che sta la sua quota).
+BUS = {}
+RELAYS_N = 3                        # quanti ne usa il gioco: vedi RELAYS in index.html
+DROP = {'n': 0, 'buttati': {}}      # mossa -> copie ancora da buttare
+FULL = {'on': False}                # nessun relay accetta piu' niente: 429
 
 
-def pub(t, m):
+def pub(k, m):
     """Restituisce il codice di stato, come fa ntfy: 200, oppure 429 a quota finita."""
     if FULL['on']:
         return 429
-    if DROP['n'] > 0:
+    # Una mossa persa deve sparire da TUTTI i relay, se no passa lo stesso: si
+    # buttano via le sue copie, una per relay. La ritrasmissione che arriva dopo
+    # invece passa, perche' e' esattamente quella che il battito deve ricucire.
+    if DROP['n'] > 0 and m not in DROP['buttati']:
+        DROP['buttati'][m] = RELAYS_N
         DROP['n'] -= 1
+    left = DROP['buttati'].get(m, 0)
+    if left > 0:
+        DROP['buttati'][m] = left - 1
         return 200
-    BUS.setdefault(t, []).append(m)
+    BUS.setdefault(k, []).append(m)
     return 200
 
 
-def sub(t, i):
-    return BUS.get(t, [])[i:]
+def sub(k, i):
+    return BUS.get(k, [])[i:]
+
+
+def msgs(topic):
+    """I messaggi visti da un relay solo: e' la misura che conta per la quota."""
+    for k in BUS:
+        if k.endswith('/' + topic):
+            return BUS[k]
+    return []
 
 
 def reset():
     BUS.clear()
     DROP['n'] = 0
+    DROP['buttati'].clear()
     FULL['on'] = False
 
 
@@ -39,7 +59,8 @@ STUB = """
 class FakeWS {
   constructor(url){
     this.url = url; this.readyState = 0;
-    this.topic = url.match(/\\/\\/[^/]+\\/([^/]+)\\/ws/)[1];
+    const m = url.match(/\\/\\/([^/]+)\\/([^/]+)\\/ws/);
+    this.topic = m[1] + '/' + m[2];        // host/topic: ogni relay ha il suo bus
     this.idx = 0;
     setTimeout(() => { this.readyState = 1; if (this.onopen) this.onopen(); this.loop() }, 30);
   }
@@ -58,9 +79,11 @@ class FakeWS {
 window.WebSocket = FakeWS;
 const _f = window.fetch;
 window.fetch = (url, opt) => {
-  if (typeof url === 'string' && url.indexOf('ntfy.sh') >= 0 && opt && opt.method === 'POST'){
+  const m = typeof url === 'string' && opt && opt.method === 'POST'
+    ? url.match(/^https:\\/\\/([^/]+)\\/(peachuno-[^/?]+)/) : null;
+  if (m){
     // il gioco legge lo stato della risposta per accorgersi del 429: qui glielo diamo
-    return window.__pub(url.split('/').pop(), opt.body).then(st => new Response('', {status: st || 200}));
+    return window.__pub(m[1] + '/' + m[2], opt.body).then(st => new Response('', {status: st || 200}));
   }
   return _f(url, opt);
 };

@@ -1,5 +1,5 @@
 from playwright.sync_api import sync_playwright
-from fake_relay import BUS, DROP, FULL, STUB, FILE, mk
+from fake_relay import BUS, DROP, FULL, STUB, FILE, mk, msgs
 
 with sync_playwright() as p:
     b = p.chromium.launch()
@@ -9,8 +9,8 @@ with sync_playwright() as p:
     A.fill('#nameIn', 'Patrizio'); A.click('#btnGo'); A.wait_for_timeout(900)
     code = A.evaluate('S.code')
     topic = 'peachuno-' + code.lower()
-    print('partita:', code, '| topic:', topic, '| messaggi:', len(BUS.get(topic, [])),
-          '| byte del primo messaggio:', len(BUS[topic][0]))
+    print('partita:', code, '| topic:', topic, '| messaggi:', len(msgs(topic)),
+          '| byte del primo messaggio:', len(msgs(topic)[0]))
     A.screenshot(path='/tmp/n_invite.png')
 
     # ingresso digitando il codice, non con il link
@@ -63,8 +63,8 @@ with sync_playwright() as p:
         if A.evaluate('S.status') == 'over':
             break
     A.wait_for_timeout(600); B.wait_for_timeout(600)
-    sizes = [len(m) for m in BUS[topic]]
-    print('mosse scambiate:', len(BUS[topic]), '| messaggio più grande:', max(sizes), 'byte (limite 4096)')
+    sizes = [len(m) for m in msgs(topic)]
+    print('mosse scambiate:', len(msgs(topic)), '| messaggio più grande:', max(sizes), 'byte (limite 4096)')
     print('stati allineati:', A.evaluate('S.v') == B.evaluate('S.v'),
           '| A:', A.evaluate('[S.v, S.status, S.players.map(p=>p.hand.length)]'),
           '| B:', B.evaluate('[S.v, S.status, S.players.map(p=>p.hand.length)]'))
@@ -77,12 +77,13 @@ with sync_playwright() as p:
         for i in range(6):
             for pg in (A, B): pg.evaluate(step); pg.wait_for_timeout(140)
     print('--- test riconnessione ---')
-    B.evaluate('() => { Net.ws.readyState = 3; Net.ws = null; Net.topic = null }')
+    # stacco tutte e tre le socket: adesso il gioco ne tiene una per relay
+    B.evaluate('() => { Net.socks.forEach(k => { if (k && k.ws){ k.ws.onclose = null; k.ws.readyState = 3; k.ws = null } if (k) k.up = false }); Net.topic = null }')
     vB = B.evaluate('S.v')
     for i in range(10):
         A.evaluate(step); A.wait_for_timeout(150)
     print('B congelato a v =', B.evaluate('S.v'), '(era', vB, ') mentre A è a v =', A.evaluate('S.v'))
-    B.evaluate('() => { Net.tries = 0; Net.start(topicOf(S.code)) }')
+    B.evaluate('() => Net.start(topicOf(S.code))')
     B.wait_for_timeout(1500)
     print('dopo la riconnessione B è a v =', B.evaluate('S.v'), '| allineato:', A.evaluate('S.v') == B.evaluate('S.v'))
 
@@ -113,9 +114,9 @@ with sync_playwright() as p:
     IDLE, TETTO = 60, 8
     for pg in (A, B):
         pg.evaluate('() => { beatStep = 0; lastSync = Date.now(); lastPing = Date.now() }')
-    prima = len(BUS[topic])
+    prima = len(msgs(topic))
     A.wait_for_timeout(IDLE * 1000)
-    spesi = len(BUS[topic]) - prima
+    spesi = len(msgs(topic)) - prima
     print('%d messaggi in %d secondi da fermi (tetto %d, col battito fisso erano ~15)'
           % (spesi, IDLE, TETTO))
     assert spesi <= TETTO, 'il battito è tornato a chiacchierare: %d messaggi' % spesi
@@ -139,7 +140,7 @@ with sync_playwright() as p:
     # e il tasto per ricaricare c'e' anche li' (il menu con la ☰ vive solo
     # dentro la partita, quindi in lobby non era raggiungibile)
     print('avviso in lobby:', A.evaluate("() => document.querySelector('#netWarn').textContent.slice(0, 60)"))
-    assert 'wifi' in A.evaluate("() => document.querySelector('#netWarn').textContent"), 'avviso quota assente'
+    assert 'relay' in A.evaluate("() => document.querySelector('#netWarn').textContent"), 'avviso assente'
     assert A.evaluate("() => !!document.querySelector('#btnUpdateLobby')"), 'in lobby manca Aggiorna il gioco'
     FULL['on'] = False
     A.evaluate('() => push()'); A.wait_for_timeout(800)

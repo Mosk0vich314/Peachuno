@@ -84,7 +84,8 @@ quindi **non "correggerle" verso le regole ufficiali.**
   la 7-0 accesa scambiano le mani una volta, non due, che sarebbe come non
   scambiarle). È una fase, `S.phase = {t:'chain', by, rank, n}`, e ci entra
   solo il `kind === 'num'`: **il Giullare resta fuori dal mucchietto** anche
-  se dichiara quel numero, ed è una mia scelta da confermare.
+  se dichiara quel numero — confermato da Patrizio, non rimetterlo in
+  discussione.
 - **Pescare**: si tocca il mazzo, **una volta sola per turno**, e poi decidi tu.
   Il turno non si chiude da solo nemmeno se la carta pescata è inutile: puoi
   giocare quella, oppure un'altra che avevi già, oppure passare con il tasto
@@ -107,9 +108,9 @@ Un punto che invece **è stato confermato** e non va rimesso in discussione: dop
 aver pescato si può giocare **qualunque** carta giocabile, non solo quella
 appena pescata. L'Uno normale direbbe il contrario; qui no.
 
-C'è un caso che nessuno ha ancora deciso: il **Giullare dichiarato come 7 o 0**
-con la regola 7-0 accesa. Oggi **non** fa scambiare le mani (lo scambio guarda
-`c.rank`, che il Giullare non ha). Se salta fuori giocando, chiedere.
+Il **Giullare dichiarato come 7 o 0** con la regola 7-0 accesa **non** fa
+scambiare le mani (lo scambio guarda `c.rank`, che il Giullare non ha):
+confermato da Patrizio, va lasciato così.
 
 Le regole opzionali (cumulo +2/+4, pesca finché non puoi, 7-0, il NO! che ferma
 anche le carte pesca, carte speciali sì/no) si accendono nella lobby e vivono in
@@ -199,53 +200,39 @@ l'unico punto da cambiare per usarne un altro.
   solo numero di versione; chi è avanti rimanda la partita intera. Senza questo,
   una mossa persa lascerebbe i due telefoni fermi ad aspettarsi a vicenda.
 
-### La quota è la cosa più facile da rompere
+### Non c'è un relay solo: ce ne sono tre, e si usano tutti insieme
 
-**ntfy.sh regala 250 messaggi ogni 12 ore, contati per indirizzo IP**
-(`curl https://ntfy.sh/v1/account` li mostra, con quanti ne restano). Se siete
-sullo stesso wifi l'IP è uno solo e la quota è una sola per tutti e due. Sono
-pochissimi, e una volta finiti si continua a **ricevere** ma non si manda più
-niente: ricevere non costa, quindi il pallino resta verde mentre ogni mossa
-finisce nel cestino. È il guasto che ha rotto il gioco la prima volta, e per
-com'era fatto il codice era invisibile: la POST era in `no-cors` e il 429 non si
-poteva leggere. Da qui due regole:
+`RELAYS` in cima al blocco `Net`. Ogni messaggio esce su **tutti**, e si
+ascoltano **tutti**. Sembra uno spreco ed è invece la cosa che ha reso il gioco
+usabile davvero.
 
-1. **Non aggiungere messaggi periodici**, e se ne tocchi uno guarda quanto costa
-   all'ora. Il battito e il rinfresco dell'invito **rallentano da soli** finché
-   non succede niente (`BEAT` 9→20→45→90→180 s, `INVITE` 15→30→60→120 s) e
-   tornano svelti solo quando succede qualcosa di vero: una mossa (`commit`), uno
-   stato nuovo dall'altra (`onRemote`), un topic nuovo (`Net.start`). Il pezzo che
-   tiene su tutto è `beatStep`. Attenzione: un battito che arriva **con la stessa
-   versione** rinfresca `lastSync` ma **non** azzera `beatStep` — se lo azzerasse,
-   i due telefoni si terrebbero svegli a vicenda per sempre, che è esattamente
-   quello che succedeva prima.
-2. **Il 429 deve restare visibile, e dire cosa fare.** `Net.setFull` mette il
-   pallino rosso e riempie `#netWarn` in lobby con il suggerimento di cambiare
-   rete. Si sblocca da solo al primo messaggio che passa, quindi anche solo col
-   battito.
-3. **La lobby deve restare una via d'uscita.** "Aggiorna il gioco" stava solo
-   nel menu ☰, e il ☰ esiste solo dentro `#s-game`: mancava proprio nell'unica
-   schermata dove uno resta piantato. Adesso c'è anche `#btnUpdateLobby`, e i
-   due tasti chiamano lo stesso `hardReload()`. Se aggiungi schermate, chiediti
-   da lì come si fa a ricaricare.
+Con il solo `ntfy.sh` non funzionava: regala 250 messaggi ogni 12 ore **contati
+per indirizzo IP**, e sui dati mobili l'indirizzo è condiviso con mezzo
+operatore (CGNAT), quindi quei 250 se li mangiavano degli sconosciuti. Non c'era
+niente da svuotare, e **cambiare rete non serviva** perché anche l'altra rete è
+condivisa. Le istanze pubbliche che usiamo adesso danno da 17.280 a un milione
+di messaggi ogni 12 ore, e una partita intera ne costa un centinaio.
 
-**Un account gratuito su ntfy.sh non serve a niente**: `curl
-https://ntfy.sh/v1/tiers` mostra che il piano di partenza è lo stesso 250 ogni
-12 ore con `basis: ip`, registrati o no. Il primo scalino vero è a pagamento
-(Supporter, 6 €/mese, 2500 messaggi ogni 5 giorni). Le uscite sono tre:
+Se un relay è pieno, giù, o sparisce, gli altri portano avanti la partita e non
+te ne accorgi. Il pallino diventa rosso solo se **nessuno** dei tre accetta.
 
-- **Cambiare rete.** Il conto è per IP: passare dal wifi ai dati del telefono
-  (o viceversa) fa ripartire la quota da capo, subito. È la via d'uscita da
-  usare sul momento, ed è quella che l'avviso in lobby suggerisce.
-- **Pagare il piano Supporter**, e mettere il token nell'header
-  `Authorization` della POST e in `?auth=` sulla WebSocket.
-- **Tirarsi su un ntfy proprio** e cambiare `RELAY`.
+Due cose da non rompere:
 
-Quanto costa davvero una partita, misurato (`tools/` + il relay finto): **~99
-messaggi per una partita intera**, una cinquantina a testa, più i battiti delle
-pause. Quindi **4-5 partite per finestra da 12 ore se siete su reti diverse**,
-la metà se siete sullo stesso wifi. Non c'è margine: se aggiungi un messaggio
-periodico, quelle partite diventano meno.
+1. **Le copie vanno buttate.** Lo stesso messaggio arriva una volta per relay.
+   `onRemote` tiene una firma (`gid|by|v|ts`) delle ultime 24 e scarta i doppioni:
+   senza, ogni ricucitura partiva in triplice copia — tre `push`, tre battiti — e
+   due telefoni disallineati si tiravano dietro una valanga invece di rimettersi
+   in pari. La ritrasmissione di uno stato **già visto** si scarta ed è giusto
+   così; quella di uno stato **mai arrivato** passa, ed è quella che ricuce.
+2. **Il battito continua a rallentare da solo** (`BEAT` 9→20→45→90→180 s,
+   `INVITE` 15→30→60→120 s, azzerati da una mossa vera, uno stato nuovo o un
+   topic nuovo). Un battito con la stessa versione rinfresca `lastSync` ma
+   **non** azzera `beatStep`, se no i due telefoni si tengono svegli a vicenda.
+
+Sono istanze tenute su da volontari. Se una muore si toglie dalla lista; per
+trovarne un'altra serve `messages` alto in `curl https://<host>/v1/account`,
+`Access-Control-Allow-Origin: *` sulla POST e la WebSocket su
+`wss://<host>/<topic>/ws` che risponde `101`.
 
 **Limite da rispettare: 4096 byte per messaggio.** Oggi il più grande misura
 ~1 KB, ma se aggiungi campi allo stato controlla che il test lo stampi ancora
