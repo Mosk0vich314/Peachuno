@@ -135,6 +135,12 @@ with sync_playwright() as p:
     assert A.evaluate('Net.full') and rosso, 'il 429 è passato inosservato'
     # e quando il relay riparte si torna verde da soli: basta il primo messaggio
     # che passa, quindi anche solo il battito, senza dover toccare niente.
+    # da fermi in lobby si deve poter uscire dal guaio: l'avviso dice cosa fare
+    # e il tasto per ricaricare c'e' anche li' (il menu con la ☰ vive solo
+    # dentro la partita, quindi in lobby non era raggiungibile)
+    print('avviso in lobby:', A.evaluate("() => document.querySelector('#netWarn').textContent.slice(0, 60)"))
+    assert 'wifi' in A.evaluate("() => document.querySelector('#netWarn').textContent"), 'avviso quota assente'
+    assert A.evaluate("() => !!document.querySelector('#btnUpdateLobby')"), 'in lobby manca Aggiorna il gioco'
     FULL['on'] = False
     A.evaluate('() => push()'); A.wait_for_timeout(800)
     print('relay di nuovo libero → Net.full:', A.evaluate('Net.full'),

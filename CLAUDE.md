@@ -77,6 +77,14 @@ quindi **non "correggerle" verso le regole ufficiali.**
   il Giullare**, che per tutto il resto conta come carta numero. Vale pure fuori
   turno: non si chiude annullando con un NO!, quindi se a lei resta solo quello
   la contesa non si apre nemmeno (`canSayNo`).
+- **Numeri uguali insieme** (opzionale, `S.opts.sameNum`). Quando cali un numero
+  puoi accodare gli altri numeri uguali che hai in mano: quanti vuoi, anche
+  nessuno — non sei obbligata a calarli tutti. Il colore lo decide l'ultima
+  carta del mucchietto e **l'effetto si applica una volta sola** (due sette con
+  la 7-0 accesa scambiano le mani una volta, non due, che sarebbe come non
+  scambiarle). È una fase, `S.phase = {t:'chain', by, rank, n}`, e ci entra
+  solo il `kind === 'num'`: **il Giullare resta fuori dal mucchietto** anche
+  se dichiara quel numero, ed è una mia scelta da confermare.
 - **Pescare**: si tocca il mazzo, **una volta sola per turno**, e poi decidi tu.
   Il turno non si chiude da solo nemmeno se la carta pescata è inutile: puoi
   giocare quella, oppure un'altra che avevi già, oppure passare con il tasto
@@ -211,13 +219,33 @@ poteva leggere. Da qui due regole:
    versione** rinfresca `lastSync` ma **non** azzera `beatStep` — se lo azzerasse,
    i due telefoni si terrebbero svegli a vicenda per sempre, che è esattamente
    quello che succedeva prima.
-2. **Il 429 deve restare visibile.** `Net.setFull` mette il pallino rosso e lo
-   dice ("relay pieno: le mosse non partono"). Si sblocca da solo al primo
-   messaggio che passa, quindi anche solo col battito.
+2. **Il 429 deve restare visibile, e dire cosa fare.** `Net.setFull` mette il
+   pallino rosso e riempie `#netWarn` in lobby con il suggerimento di cambiare
+   rete. Si sblocca da solo al primo messaggio che passa, quindi anche solo col
+   battito.
+3. **La lobby deve restare una via d'uscita.** "Aggiorna il gioco" stava solo
+   nel menu ☰, e il ☰ esiste solo dentro `#s-game`: mancava proprio nell'unica
+   schermata dove uno resta piantato. Adesso c'è anche `#btnUpdateLobby`, e i
+   due tasti chiamano lo stesso `hardReload()`. Se aggiungi schermate, chiediti
+   da lì come si fa a ricaricare.
 
-Se 250 diventano stretti: un account gratuito su ntfy.sh alza il limite ed è per
-utente invece che per IP (token nell'header `Authorization` sulla POST e in
-`?auth=` sulla WebSocket), oppure si cambia `RELAY`.
+**Un account gratuito su ntfy.sh non serve a niente**: `curl
+https://ntfy.sh/v1/tiers` mostra che il piano di partenza è lo stesso 250 ogni
+12 ore con `basis: ip`, registrati o no. Il primo scalino vero è a pagamento
+(Supporter, 6 €/mese, 2500 messaggi ogni 5 giorni). Le uscite sono tre:
+
+- **Cambiare rete.** Il conto è per IP: passare dal wifi ai dati del telefono
+  (o viceversa) fa ripartire la quota da capo, subito. È la via d'uscita da
+  usare sul momento, ed è quella che l'avviso in lobby suggerisce.
+- **Pagare il piano Supporter**, e mettere il token nell'header
+  `Authorization` della POST e in `?auth=` sulla WebSocket.
+- **Tirarsi su un ntfy proprio** e cambiare `RELAY`.
+
+Quanto costa davvero una partita, misurato (`tools/` + il relay finto): **~99
+messaggi per una partita intera**, una cinquantina a testa, più i battiti delle
+pause. Quindi **4-5 partite per finestra da 12 ore se siete su reti diverse**,
+la metà se siete sullo stesso wifi. Non c'è margine: se aggiungi un messaggio
+periodico, quelle partite diventano meno.
 
 **Limite da rispettare: 4096 byte per messaggio.** Oggi il più grande misura
 ~1 KB, ma se aggiungi campi allo stato controlla che il test lo stampi ancora

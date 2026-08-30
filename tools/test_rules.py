@@ -344,6 +344,103 @@ with sync_playwright() as p:
     B.wait_for_timeout(700); A.wait_for_timeout(500)
     check('beccato: ha pescato 2', A.evaluate('() => S.players[%d].hand.length' % a_idx), 3)
 
+    # ─────────────── numeri uguali insieme (opzionale) ───────────────
+    print('\n— la regola spenta: un numero resta un numero —')
+    setup(A, FORCE_TURN + """
+      s.status = 'playing'; s.winner = null; s.opts.sameNum = false; s.opts.sevenZero = false;
+      s.discard = [CARDS.findIndex(c => c.art === 'n6_blue')]; s.color = 'blue';
+      s.players[s.turn].hand = ['n5_blue','n5_green','n9_blue'].map(a => CARDS.findIndex(c => c.art === a));
+      s.players[1-s.turn].hand = ['n8_green','n4_green'].map(a => CARDS.findIndex(c => c.art === a));
+    """)
+    a_idx = A.evaluate('S.turn')
+    A.evaluate("() => commit(s => playFromHand(s, s.turn, CARDS.findIndex(c => c.art === 'n5_blue'), null))")
+    A.wait_for_timeout(600)
+    check('nessuna finestra: la giocata si chiude subito', A.evaluate('() => S.phase'), None)
+    check('turno passato', A.evaluate('S.turn'), 1 - a_idx)
+
+    print('\n— la regola accesa: accodo quelli che voglio —')
+    setup(A, FORCE_TURN + """
+      s.status = 'playing'; s.winner = null; s.opts.sameNum = true; s.opts.sevenZero = false;
+      s.discard = [CARDS.findIndex(c => c.art === 'n6_blue')]; s.color = 'blue';
+      s.players[s.turn].hand = ['n5_blue','n5_green','n5_orange','n9_blue'].map(a => CARDS.findIndex(c => c.art === a));
+      s.players[1-s.turn].hand = ['n8_green','n4_green'].map(a => CARDS.findIndex(c => c.art === a));
+    """)
+    a_idx = A.evaluate('S.turn')
+    A.evaluate("() => commit(s => playFromHand(s, s.turn, CARDS.findIndex(c => c.art === 'n5_blue'), null))")
+    A.wait_for_timeout(600)
+    check('si apre la finestra sul 5', A.evaluate('() => S.phase && [S.phase.t, S.phase.rank]'), ['chain', 5])
+    check('il turno non e\' passato', A.evaluate('S.turn'), a_idx)
+    check('mi propone solo gli altri 5',
+          A.evaluate("() => [...document.querySelectorAll('#phaseBox .chainpick')].map(e => C(+e.dataset.i).art).sort()"),
+          ['n5_green', 'n5_orange'])
+    check('lei aspetta e basta', B.evaluate("() => /Un attimo/.test(document.querySelector('#phaseBox').textContent)"), True)
+    # ne accodo uno solo dei due
+    A.evaluate("() => commit(s => resolveChain(s, CARDS.findIndex(c => c.art === 'n5_green')))")
+    A.wait_for_timeout(600)
+    check('accodato: la finestra resta aperta', A.evaluate('() => S.phase && S.phase.t'), 'chain')
+    check('il colore lo ha preso l\'ultima calata', A.evaluate('S.color'), 'green')
+    # l'altro me lo tengo
+    A.evaluate('() => commit(s => resolveChain(s, null))')
+    A.wait_for_timeout(700)
+    check('chiuso il mucchietto', A.evaluate('() => S.phase'), None)
+    check('ho calato 2 carte, non 3', A.evaluate('() => S.players[%d].hand.map(c => C(c).art).sort()' % a_idx),
+          ['n5_orange', 'n9_blue'])
+    check('sugli scarti ci sono le due calate',
+          A.evaluate('() => S.discard.map(c => C(c).art)'), ['n6_blue', 'n5_blue', 'n5_green'])
+    check('adesso il turno e\' passato', A.evaluate('S.turn'), 1 - a_idx)
+    check('i due telefoni sono d\'accordo',
+          A.evaluate('() => [S.v, S.color, S.players.map(p => p.hand.length)]'),
+          B.evaluate('() => [S.v, S.color, S.players.map(p => p.hand.length)]'))
+
+    print('\n— chiudo calando gli ultimi due numeri uguali —')
+    setup(A, FORCE_TURN + """
+      s.status = 'playing'; s.winner = null; s.opts.sameNum = true;
+      s.discard = [CARDS.findIndex(c => c.art === 'n6_blue')]; s.color = 'blue';
+      s.players[s.turn].hand = ['n5_blue','n5_green'].map(a => CARDS.findIndex(c => c.art === a));
+      s.players[1-s.turn].hand = ['n8_green','n4_green'].map(a => CARDS.findIndex(c => c.art === a));
+    """)
+    a_idx = A.evaluate('S.turn')
+    A.evaluate("() => commit(s => playFromHand(s, s.turn, CARDS.findIndex(c => c.art === 'n5_blue'), null))")
+    A.wait_for_timeout(500)
+    check('finestra aperta con una carta sola in mano', A.evaluate('() => S.phase && S.phase.t'), 'chain')
+    A.evaluate("() => commit(s => resolveChain(s, CARDS.findIndex(c => c.art === 'n5_green')))")
+    A.wait_for_timeout(700)
+    check('finita la roba da accodare si chiude da solo', A.evaluate('() => S.phase'), None)
+    check('ho vinto', A.evaluate('() => [S.status, S.winner]'), ['over', a_idx])
+    check('lo sa anche lei', B.evaluate('() => [S.status, S.winner]'), ['over', a_idx])
+
+    print('\n— due sette con la 7-0: si scambia una volta sola —')
+    setup(A, FORCE_TURN + """
+      s.status = 'playing'; s.winner = null; s.opts.sameNum = true; s.opts.sevenZero = true;
+      s.discard = [CARDS.findIndex(c => c.art === 'n6_blue')]; s.color = 'blue';
+      s.players[s.turn].hand = ['n7_blue','n7_green','n9_blue'].map(a => CARDS.findIndex(c => c.art === a));
+      s.players[1-s.turn].hand = ['n8_green','n4_green','n2_blue','n3_red'].map(a => CARDS.findIndex(c => c.art === a));
+    """)
+    a_idx = A.evaluate('S.turn')
+    A.evaluate("() => commit(s => playFromHand(s, s.turn, CARDS.findIndex(c => c.art === 'n7_blue'), null))")
+    A.wait_for_timeout(500)
+    A.evaluate("() => commit(s => resolveChain(s, CARDS.findIndex(c => c.art === 'n7_green')))")
+    A.wait_for_timeout(700)
+    # calati due 7, in mano gli restava n9_blue: dopo UNO scambio ha le 4 di lei
+    check('scambiate una volta sola',
+          A.evaluate('() => [S.players[%d].hand.length, S.players[%d].hand.length]' % (a_idx, 1 - a_idx)), [4, 1])
+    check('lei si ritrova il 9 che gli era rimasto',
+          A.evaluate('() => S.players[%d].hand.map(c => C(c).art)' % (1 - a_idx)), ['n9_blue'])
+
+    print('\n— accodare una carta che non c\'entra viene rifiutato —')
+    setup(A, FORCE_TURN + """
+      s.status = 'playing'; s.winner = null; s.opts.sameNum = true; s.opts.sevenZero = false;
+      s.discard = [CARDS.findIndex(c => c.art === 'n6_blue')]; s.color = 'blue';
+      s.players[s.turn].hand = ['n5_blue','n5_green','n9_blue'].map(a => CARDS.findIndex(c => c.art === a));
+      s.players[1-s.turn].hand = ['n8_green','n4_green'].map(a => CARDS.findIndex(c => c.art === a));
+    """)
+    A.evaluate("() => commit(s => playFromHand(s, s.turn, CARDS.findIndex(c => c.art === 'n5_blue'), null))")
+    A.wait_for_timeout(500)
+    A.evaluate("() => commit(s => resolveChain(s, CARDS.findIndex(c => c.art === 'n9_blue')))")
+    A.wait_for_timeout(500)
+    check('il 9 non si accoda a un 5', A.evaluate('() => S.phase && S.phase.t'), 'chain')
+    check('e resta in mano', A.evaluate("() => S.players[S.phase.by].hand.some(c => C(c).art === 'n9_blue')"), True)
+
     b.close()
 
 print('\n' + ('FATTO: tutto a posto' if not fails else 'FALLITE %d prove: %s' % (len(fails), ', '.join(fails))))
