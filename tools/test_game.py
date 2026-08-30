@@ -148,5 +148,35 @@ with sync_playwright() as p:
           '| pallino verde:', not A.evaluate("() => document.querySelector('#netdot2').classList.contains('off')"))
     assert not A.evaluate('Net.full'), 'resta bloccato anche quando il relay riparte'
 
+    # ── due parole mentre si gioca ──────────────────────────────────────────
+    # La chat NON sta dentro S: lo stato viaggia intero a ogni mossa e ha un
+    # tetto di 3900 byte. Va come messaggio a parte sullo stesso topic.
+    print('--- chat ---')
+    A.evaluate("() => chatSend('ciao amore')")
+    A.wait_for_timeout(1000); B.wait_for_timeout(600)
+    assert B.evaluate("() => CHAT.some(m => m.txt === 'ciao amore')"), 'il messaggio non e arrivato'
+    letti = B.evaluate('chatUnread')
+    print('lei riceve:', B.evaluate('() => CHAT.map(m => m.txt)'), '| da leggere:', letti)
+    assert letti == 1, 'tre relay, una copia sola attesa: da leggere %s' % letti
+    assert A.evaluate('() => S.chat === undefined'), 'la chat non deve finire nello stato'
+    assert A.evaluate('() => store.get("game").chat === undefined'), 'ne' + "' salvata nello stato"
+
+    B.evaluate("() => chatSend('anche a te, tocca a te')")
+    B.wait_for_timeout(1000); A.wait_for_timeout(600)
+    assert A.evaluate('() => CHAT.length') == 2, 'lui non ha ricevuto la risposta'
+    A.evaluate('() => openChat()'); A.wait_for_timeout(300)
+    assert A.evaluate('chatUnread') == 0, 'aprendo la chat il pallino deve azzerarsi'
+    print('scambiati:', A.evaluate('() => CHAT.map(m => m.nm + ": " + m.txt)'))
+    A.evaluate("() => closeSheet('sheetChat')")
+
+    # la cronologia deve reggere una ricarica: la rimette insieme localStorage
+    print('salvati in locale:', A.evaluate('() => (store.get("chat_" + S.gid) || []).length'))
+    assert A.evaluate('() => (store.get("chat_" + S.gid) || []).length') == 2, 'cronologia non salvata'
+
+    # e lo stato deve essere rimasto piccolo
+    sizes2 = [len(m) for m in msgs(topic)]
+    print('messaggio piu grande dopo la chat:', max(sizes2), 'byte (limite 4096)')
+    assert max(sizes2) < 3900, 'messaggio oltre soglia'
+
     b.close()
 print('FATTO')

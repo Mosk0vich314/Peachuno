@@ -60,7 +60,11 @@ quindi **non "correggerle" verso le regole ufficiali.**
   parte. **Angioletto e Diavoletto non sono nel mazzo**, sono due segnalini
   riusati a ogni Armageddon.
 - **Giullare** (×2 nel mazzo). Vale come qualunque carta numero di qualunque
-  colore: chi la gioca dichiara numero e colore.
+  colore: chi la gioca dichiara numero e colore. Il numero dichiarato si legge
+  in un **angolino** della carta (`.card .jv`): prima era un cerchione in mezzo
+  e copriva il muso del gatto, che è metà del motivo per cui il mazzo piace.
+  `test_rules.py` misura che il badge non stia sul centro e resti sotto il 9%
+  della carta — se lo tocchi, tienilo piccolo.
 - **UNO**: 5 secondi per dirlo, poi peschi 2. La penalità **scatta da sola alla
   scadenza**, non serve che l'altra se ne accorga: il pulsante "Beccala!" serve
   solo ad anticiparla mentre i secondi corrono. Ad applicarla è il telefono
@@ -241,6 +245,25 @@ sotto soglia. `Net.send` rifiuta i messaggi oltre 3900 byte.
 Lo stato locale sta in `localStorage` (`uno_me`, `uno_game`), così si riprende
 una partita riaprendo il sito.
 
+### La chat non sta nello stato, ed è apposta
+
+I messaggi viaggiano come **messaggi a parte** sullo stesso topic
+(`{gid, chat:1, by, nm, txt, ts}`), non dentro `S`. Se stessero in `S` verrebbero
+rispediti interi a ogni mossa e con il tetto di 3900 byte la conversazione
+farebbe scoppiare la partita dopo poche righe.
+
+Ci si guadagna anche la cronologia gratis: le WebSocket si aprono con
+`since=10h`, quindi riaprendo il gioco i messaggi delle ultime ore ripiovono da
+soli dai relay. Per questo `chatAdd` riconosce i doppioni da `by` + `ts`, e non
+si affida a `seenSig`, che tiene solo le ultime 24 firme e su una replica lunga
+non basta.
+
+La copia locale sta in `uno_chat_<gid>`, tagliata a 60 messaggi. `chatClean()`
+butta le conversazioni delle partite vecchie quando se ne apre una nuova, e
+uscire dalla partita cancella la sua. Il testo passa sempre da `esc()` prima di
+finire in `innerHTML`: è l'unico punto del gioco dove entra roba scritta a mano
+da una persona.
+
 ## Pubblicare
 
 Si pubblica con un `git push` sul ramo `main`: GitHub Pages serve il repo così
@@ -316,6 +339,8 @@ telefoni), sostituisce WebSocket e `fetch` con un relay finto in memoria
   lontana la quota di ntfy, quindi se la tocchi sappi cosa stai facendo.
 - **relay pieno**: il relay finto risponde 429 (`FULL['on']`) e il gioco deve
   diventare rosso e dirlo, poi tornare verde da solo quando il relay riparte
+- **chat**: un messaggio va da un telefono all'altro, arriva **una volta sola**
+  anche se i relay sono tre, non finisce dentro `S`, e resta in `localStorage`
 
 Stampa anche la dimensione del messaggio più grande. Va fatto girare dopo ogni
 modifica al motore, allo stato o al battito.

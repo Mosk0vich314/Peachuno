@@ -441,6 +441,35 @@ with sync_playwright() as p:
     check('il 9 non si accoda a un 5', A.evaluate('() => S.phase && S.phase.t'), 'chain')
     check('e resta in mano', A.evaluate("() => S.players[S.phase.by].hand.some(c => C(c).art === 'n9_blue')"), True)
 
+    # ─────────────── il numero del Giullare sta nell'angolo ───────────────
+    print('\n— il numero del Giullare non copre il muso del gatto —')
+    setup(A, FORCE_TURN + """
+      s.status = 'playing'; s.winner = null; s.opts.specials = true; s.opts.sameNum = false;
+      s.discard = [CARDS.findIndex(c => c.art === 'n5_red')]; s.color = 'red';
+      s.players[s.turn].hand = ['jester'].map(a => CARDS.findIndex(c => c.art === a))
+        .concat([CARDS.findIndex(c => c.art === 'n9_blue')]);
+      s.players[1-s.turn].hand = ['n8_green','n4_green'].map(a => CARDS.findIndex(c => c.art === a));
+    """)
+    A.evaluate("() => commit(s => playFromHand(s, s.turn, s.players[s.turn].hand[0], {color:'blue', rank:3}))")
+    A.wait_for_timeout(700)
+    geo = A.evaluate("""() => {
+      const card = document.querySelector('#discardPile .card');
+      const jv = card && card.querySelector('.jv');
+      if (!jv) return null;
+      const c = card.getBoundingClientRect(), b = jv.getBoundingClientRect();
+      const cx = c.left + c.width/2, cy = c.top + c.height/2;
+      return {
+        testo: jv.textContent,
+        quota: (b.width * b.height) / (c.width * c.height),
+        sulCentro: b.left <= cx && b.right >= cx && b.top <= cy && b.bottom >= cy
+      };
+    }""")
+    check('il numero dichiarato si vede', geo and geo['testo'], '3')
+    check('non sta in mezzo alla carta', geo and geo['sulCentro'], False)
+    check('occupa un angolino', bool(geo and geo['quota'] < 0.09), True)
+    if geo:
+        print('        (occupa il %.1f%% della carta)' % (geo['quota'] * 100))
+
     b.close()
 
 print('\n' + ('FATTO: tutto a posto' if not fails else 'FALLITE %d prove: %s' % (len(fails), ', '.join(fails))))
