@@ -1,5 +1,5 @@
 from playwright.sync_api import sync_playwright
-from fake_relay import BUS, DROP, STUB, FILE, mk
+from fake_relay import BUS, DROP, FULL, STUB, FILE, mk
 
 with sync_playwright() as p:
     b = p.chromium.launch()
@@ -102,5 +102,44 @@ with sync_playwright() as p:
     print('recuperato:', A.evaluate('S.v') == B.evaluate('S.v'),
           '| A v =', A.evaluate('S.v'), 'B v =', B.evaluate('S.v'),
           '| mani identiche:', A.evaluate('JSON.stringify(S.players.map(p=>p.hand.length))') == B.evaluate('JSON.stringify(S.players.map(p=>p.hand.length))'))
+
+    # ── quanto chiacchierano stando fermi ───────────────────────────────────
+    # ntfy.sh regala 250 messaggi ogni 12 ore per indirizzo IP, e se siete sullo
+    # stesso wifi l'IP è uno solo. Col battito fisso a ~8 secondi erano quindici
+    # messaggi al minuto per guardarsi la mano: la quota finiva in venti minuti
+    # e la partita moriva senza dirlo. Qui si misura da fermi, partendo dal caso
+    # peggiore (battito appena azzerato, come subito dopo una mossa).
+    print('--- traffico da fermi ---')
+    IDLE, TETTO = 60, 8
+    for pg in (A, B):
+        pg.evaluate('() => { beatStep = 0; lastSync = Date.now(); lastPing = Date.now() }')
+    prima = len(BUS[topic])
+    A.wait_for_timeout(IDLE * 1000)
+    spesi = len(BUS[topic]) - prima
+    print('%d messaggi in %d secondi da fermi (tetto %d, col battito fisso erano ~15)'
+          % (spesi, IDLE, TETTO))
+    assert spesi <= TETTO, 'il battito è tornato a chiacchierare: %d messaggi' % spesi
+    print('quota ntfy: %.0f minuti di partita ferma prima dei 250 messaggi'
+          % (250.0 / max(spesi, 1) * IDLE / 60))
+
+    # ── il relay che dice di no non deve restare invisibile ─────────────────
+    # Era questo il guasto vero: la POST in `no-cors` non lasciava leggere il
+    # 429, il pallino guardava solo la WebSocket (e ricevere non costa niente),
+    # quindi il gioco restava verde e buttava via ogni mossa in silenzio.
+    print('--- relay pieno (429) ---')
+    FULL['on'] = True
+    A.evaluate('() => push()'); A.wait_for_timeout(800)
+    rosso = A.evaluate("() => document.querySelector('#netdot2').classList.contains('off')")
+    print('Net.full:', A.evaluate('Net.full'), '| pallino rosso:', rosso,
+          '| avviso:', A.evaluate("() => document.querySelector('#toast').textContent"))
+    assert A.evaluate('Net.full') and rosso, 'il 429 è passato inosservato'
+    # e quando il relay riparte si torna verde da soli: basta il primo messaggio
+    # che passa, quindi anche solo il battito, senza dover toccare niente.
+    FULL['on'] = False
+    A.evaluate('() => push()'); A.wait_for_timeout(800)
+    print('relay di nuovo libero → Net.full:', A.evaluate('Net.full'),
+          '| pallino verde:', not A.evaluate("() => document.querySelector('#netdot2').classList.contains('off')"))
+    assert not A.evaluate('Net.full'), 'resta bloccato anche quando il relay riparte'
+
     b.close()
 print('FATTO')

@@ -62,7 +62,7 @@ with sync_playwright() as p:
     check('il mazzo cliccato pesca', A.evaluate('() => S.players[S.turn].hand.length'), 4)
     check('il turno non e\' passato', A.evaluate('S.turn'), turn_before)
     check('la carta pescata e\' segnata', A.evaluate('() => C(S.drawn).art'), 'n3_red')
-    check('posso giocare solo quella',
+    check('la pescata si puo\' giocare',
           A.evaluate('() => S.players[S.turn].hand.filter(c => playable(c, S)).map(c => C(c).art)'), ['n3_red'])
     check('non posso pescare due volte', A.evaluate('() => canDraw()'), False)
     A.evaluate('() => commit(s => playFromHand(s, s.turn, s.drawn, null))'); A.wait_for_timeout(600)
@@ -124,6 +124,23 @@ with sync_playwright() as p:
     check('Armageddon annullato: nessuna fase aperta', A.evaluate('() => S.phase'), None)
     check('rigioca chi aveva lanciato la speciale', A.evaluate('S.turn'), a_idx)
     check('nessuno ha pescato 8', A.evaluate('() => S.players[%d].hand.length' % a_idx), 1)
+    check('lei ha speso solo il NO!', A.evaluate('() => S.players[%d].hand.length' % (1 - a_idx)), 1)
+    check('l\'Armageddon e\' finito sugli scarti', A.evaluate("() => S.discard.map(c => C(c).kind)"),
+          ['num', 'duel', 'skip'])
+    check('la partita non e\' finita', A.evaluate('S.status'), 'playing')
+
+    print('\n— se le resta un NO! soltanto, la contesa non si apre —')
+    # non si chiude con una carta azione, quindi quel NO! e' inservibile: meglio
+    # non offrirle nemmeno la finestra
+    setup(A, FORCE_TURN + """
+      s.discard = [CARDS.findIndex(c => c.art === 'n5_red')]; s.color = 'red';
+      s.opts.specials = true;
+      s.players[s.turn].hand = [CARDS.findIndex(c => c.kind === 'duel'), CARDS.findIndex(c => c.art === 'n9_blue')];
+      s.players[1-s.turn].hand = [CARDS.findIndex(c => c.art === 'skip_blue')];
+    """)
+    A.evaluate("() => commit(s => playFromHand(s, s.turn, s.players[s.turn].hand[0], null))")
+    A.wait_for_timeout(600)
+    check('niente contesa: l\'Armageddon parte', A.evaluate('() => S.phase && S.phase.t'), 'armaPlace')
 
     # ─────────────── Armageddon: il bluff ───────────────
     print('\n— Armageddon: decido io quale segnalino le metto davanti —')
@@ -195,6 +212,137 @@ with sync_playwright() as p:
     A.evaluate("() => commit(s => { s.uno.called = true; say(s, 'UNO!') })")
     A.wait_for_timeout(7000); B.wait_for_timeout(1200)
     check('detto in tempo, resto con una carta', A.evaluate('() => S.players[%d].hand.length' % a_idx), 1)
+
+    # ─────────────── non si chiude con una carta azione ───────────────
+    print('\n— con l\'ultima carta azione non si chiude —')
+    for nome, arte in [('un NO!', 'skip_red'), ('un Rivela', 'rev_red'), ('un +2', 'draw2_red'),
+                       ('un Jolly', 'wild_a'), ('un Armageddon', None), ('un Giullare', 'jester')]:
+        trova = ("CARDS.findIndex(c => c.kind === 'duel')" if arte is None
+                 else "CARDS.findIndex(c => c.art === '%s')" % arte)
+        setup(A, FORCE_TURN + """
+          s.discard = [CARDS.findIndex(c => c.art === 'n5_red')]; s.color = 'red';
+          s.opts.specials = true;
+          s.players[s.turn].hand = [%s];
+          s.players[1-s.turn].hand = ['n8_green','n9_blue'].map(a => CARDS.findIndex(c => c.art === a));
+        """ % trova)
+        check('%s da solo non si puo\' giocare' % nome,
+              A.evaluate('() => playable(S.players[S.turn].hand[0], S)'), False)
+        A.evaluate('() => commit(s => playFromHand(s, s.turn, s.players[s.turn].hand[0], null))')
+        A.wait_for_timeout(350)
+        check('%s: la mossa e\' rifiutata, resta in mano' % nome,
+              A.evaluate('() => [S.players[S.turn].hand.length, S.status]'), [1, 'playing'])
+
+    print('\n— con l\'ultima carta numero si chiude —')
+    setup(A, FORCE_TURN + """
+      s.discard = [CARDS.findIndex(c => c.art === 'n5_red')]; s.color = 'red';
+      s.players[s.turn].hand = [CARDS.findIndex(c => c.art === 'n3_red')];
+      s.players[1-s.turn].hand = ['n8_green','n9_blue'].map(a => CARDS.findIndex(c => c.art === a));
+    """)
+    a_idx = A.evaluate('S.turn')
+    check('il numero da solo si gioca', A.evaluate('() => playable(S.players[S.turn].hand[0], S)'), True)
+    A.evaluate('() => commit(s => playFromHand(s, s.turn, s.players[s.turn].hand[0], null))')
+    A.wait_for_timeout(700)
+    check('chiuso: partita finita', A.evaluate('S.status'), 'over')
+    check('ha vinto chi ha giocato', A.evaluate('S.winner'), a_idx)
+    check('lo sa anche l\'altro telefono', B.evaluate('() => [S.status, S.winner]'), ['over', a_idx])
+
+    print('\n— e nemmeno un NO! fuori turno puo\' chiudere —')
+    setup(A, FORCE_TURN + """
+      s.status = 'playing'; s.winner = null;
+      s.discard = [CARDS.findIndex(c => c.art === 'n5_red')]; s.color = 'red';
+      s.opts.specials = true;
+      s.players[s.turn].hand = [CARDS.findIndex(c => c.kind === 'duel'), CARDS.findIndex(c => c.art === 'n9_blue')];
+      s.players[1-s.turn].hand = ['skip_blue','n8_green'].map(a => CARDS.findIndex(c => c.art === a));
+    """)
+    A.evaluate("() => commit(s => playFromHand(s, s.turn, s.players[s.turn].hand[0], null))")
+    A.wait_for_timeout(600)
+    check('la contesa e\' aperta', A.evaluate('() => S.phase && S.phase.t'), 'cancel')
+    # le tolgo l'altra carta: adesso il NO! sarebbe la sua ultima
+    B.evaluate("() => commit(s => { s.players[1-s.phase.by].hand = s.players[1-s.phase.by].hand.filter(c => C(c).kind === 'skip') })")
+    B.wait_for_timeout(500)
+    B.evaluate("() => commit(s => resolveCancel(s, s.players[1-s.phase.by].hand[0]))")
+    B.wait_for_timeout(700)
+    check('il NO! non parte: la contesa resta aperta', B.evaluate('() => S.phase && S.phase.t'), 'cancel')
+    check('e lei ha ancora il suo NO!', B.evaluate('() => S.players[1-S.phase.by].hand.length'), 1)
+    check('la partita non e\' finita', B.evaluate('S.status'), 'playing')
+
+    # ─────────────── 7-0: chiudere con un 7 non scambia niente ───────────────
+    print('\n— chiudo con un 7 e la regola 7-0 accesa —')
+    setup(A, FORCE_TURN + """
+      s.status = 'playing'; s.winner = null; s.opts.sevenZero = true;
+      s.discard = [CARDS.findIndex(c => c.art === 'n5_red')]; s.color = 'red';
+      s.players[s.turn].hand = [CARDS.findIndex(c => c.art === 'n7_red')];
+      s.players[1-s.turn].hand = ['n8_green','n9_blue','n4_green'].map(a => CARDS.findIndex(c => c.art === a));
+    """)
+    a_idx = A.evaluate('S.turn')
+    A.evaluate('() => commit(s => playFromHand(s, s.turn, s.players[s.turn].hand[0], null))')
+    A.wait_for_timeout(700)
+    check('vinta con il 7', A.evaluate('() => [S.status, S.winner]'), ['over', a_idx])
+    check('le mani NON sono state scambiate',
+          A.evaluate('() => [S.players[%d].hand.length, S.players[%d].hand.length]' % (a_idx, 1 - a_idx)), [0, 3])
+    check('l\'altro telefono e\' d\'accordo',
+          B.evaluate('() => [S.status, S.winner, S.players.map(p => p.hand.length)]'), ['over', a_idx, [0, 3]] if a_idx == 0 else ['over', a_idx, [3, 0]])
+
+    print('\n— il 7 a meta\' partita scambia ancora —')
+    setup(A, FORCE_TURN + """
+      s.status = 'playing'; s.winner = null; s.opts.sevenZero = true;
+      s.discard = [CARDS.findIndex(c => c.art === 'n5_red')]; s.color = 'red';
+      s.players[s.turn].hand = ['n7_red','n9_blue'].map(a => CARDS.findIndex(c => c.art === a));
+      s.players[1-s.turn].hand = ['n8_green','n4_green','n2_blue'].map(a => CARDS.findIndex(c => c.art === a));
+    """)
+    a_idx = A.evaluate('S.turn')
+    A.evaluate("() => commit(s => playFromHand(s, s.turn, CARDS.findIndex(c => c.art === 'n7_red'), null))")
+    A.wait_for_timeout(700)
+    check('mani scambiate', A.evaluate('() => [S.players[%d].hand.length, S.players[%d].hand.length]' % (a_idx, 1 - a_idx)),
+          [3, 1])
+    check('la partita continua', A.evaluate('S.status'), 'playing')
+
+    # ─────────────── pesco, poi decido ───────────────
+    print('\n— pesco una carta inutile e decido lo stesso cosa fare —')
+    setup(A, FORCE_TURN + """
+      s.status = 'playing'; s.winner = null; s.opts.sevenZero = false;
+      s.discard = [CARDS.findIndex(c => c.art === 'n5_red')]; s.color = 'red';
+      s.players[s.turn].hand = ['n2_red','n9_blue'].map(a => CARDS.findIndex(c => c.art === a));
+      s.players[1-s.turn].hand = ['n8_green','n4_green'].map(a => CARDS.findIndex(c => c.art === a));
+      s.deck.push(CARDS.findIndex(c => c.art === 'n6_blue'));
+    """)
+    a_idx = A.evaluate('S.turn')
+    A.click('#drawPile'); A.wait_for_timeout(600)
+    check('ho pescato la carta inutile', A.evaluate('() => C(S.drawn).art'), 'n6_blue')
+    check('il turno NON si e\' chiuso da solo', A.evaluate('S.turn'), a_idx)
+    check('posso ancora giocare quella che avevo',
+          A.evaluate('() => S.players[S.turn].hand.filter(c => playable(c, S)).map(c => C(c).art)'), ['n2_red'])
+    check('il tasto Passa c\'e\'', A.evaluate("() => /Passa/.test(document.querySelector('#handActions').textContent)"), True)
+    A.evaluate("() => commit(s => playFromHand(s, s.turn, CARDS.findIndex(c => c.art === 'n2_red'), null))")
+    A.wait_for_timeout(600)
+    check('giocata quella vecchia, turno passato', A.evaluate('() => [C(S.discard[S.discard.length-1]).art, S.turn]'),
+          ['n2_red', 1 - a_idx])
+
+    # ─────────────── il tasto giallo si arma dopo un secondo ───────────────
+    print('\n— Beccala! compare dopo un secondo —')
+    setup(A, FORCE_TURN + """
+      s.status = 'playing'; s.winner = null;
+      s.discard = [CARDS.findIndex(c => c.art === 'n5_red')]; s.color = 'red';
+      s.players[s.turn].hand = ['n9_blue','n3_red'].map(a => CARDS.findIndex(c => c.art === a));
+      s.players[1-s.turn].hand = ['n8_green','n4_green'].map(a => CARDS.findIndex(c => c.art === a));
+    """)
+    a_idx = A.evaluate('S.turn')
+    # A gioca e resta con una carta: il tasto giallo tocca a B
+    A.evaluate("() => commit(s => playFromHand(s, s.turn, CARDS.findIndex(c => c.art === 'n3_red'), null))")
+    A.wait_for_timeout(250)
+    check('subito il giallo non c\'e\'',
+          B.evaluate("() => /Beccala/.test(document.querySelector('#unoBar').textContent)"), False)
+    check('e beccarla adesso non funziona', B.evaluate('() => catchable(S.uno)'), False)
+    check('ma lui il suo UNO! ce l\'ha gia\'',
+          A.evaluate("() => /UNO/.test(document.querySelector('#unoBar').textContent)"), True)
+    B.wait_for_timeout(1400)
+    check('dopo un secondo il giallo si arma',
+          B.evaluate("() => /Beccala/.test(document.querySelector('#unoBar').textContent)"), True)
+    check('e adesso puo\' beccarlo', B.evaluate('() => catchable(S.uno)'), True)
+    # il tasto pulsa e si ridisegna a ogni tick: lo premo da dentro la pagina
+    B.evaluate("() => document.querySelector('#unoBar button').click()")
+    B.wait_for_timeout(700); A.wait_for_timeout(500)
+    check('beccato: ha pescato 2', A.evaluate('() => S.players[%d].hand.length' % a_idx), 3)
 
     b.close()
 

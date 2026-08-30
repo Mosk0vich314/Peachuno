@@ -9,13 +9,18 @@ import os
 
 BUS = {}          # topic -> lista di messaggi
 DROP = {'n': 0}   # quante prossime pubblicazioni buttare via, per il test della mossa persa
+FULL = {'on': False}   # il relay ha finito i messaggi: risponde 429 a tutto
 
 
 def pub(t, m):
+    """Restituisce il codice di stato, come fa ntfy: 200, oppure 429 a quota finita."""
+    if FULL['on']:
+        return 429
     if DROP['n'] > 0:
         DROP['n'] -= 1
-        return
+        return 200
     BUS.setdefault(t, []).append(m)
+    return 200
 
 
 def sub(t, i):
@@ -25,6 +30,7 @@ def sub(t, i):
 def reset():
     BUS.clear()
     DROP['n'] = 0
+    FULL['on'] = False
 
 
 FILE = 'file://' + os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'index.html')
@@ -53,8 +59,8 @@ window.WebSocket = FakeWS;
 const _f = window.fetch;
 window.fetch = (url, opt) => {
   if (typeof url === 'string' && url.indexOf('ntfy.sh') >= 0 && opt && opt.method === 'POST'){
-    window.__pub(url.split('/').pop(), opt.body);
-    return Promise.resolve(new Response(''));
+    // il gioco legge lo stato della risposta per accorgersi del 429: qui glielo diamo
+    return window.__pub(url.split('/').pop(), opt.body).then(st => new Response('', {status: st || 200}));
   }
   return _f(url, opt);
 };

@@ -66,12 +66,25 @@ quindi **non "correggerle" verso le regole ufficiali.**
   solo ad anticiparla mentre i secondi corrono. Ad applicarla è il telefono
   dell'**altra** (così non basta chiudere l'app per non pescare); se lei ha il
   telefono in tasca ci pensa il battito, con qualche secondo di ritardo.
-- **Pescare**: si tocca il mazzo. Se la carta pescata è giocabile **non salti il
-  turno**: puoi giocare quella (solo quella) oppure tenertela e passare.
+  Il tasto giallo dell'altra però **si arma solo dopo un secondo**
+  (`UNO_GRACE`): senza quella pausa lei ti becca prima che tu abbia visto
+  comparire il tuo tasto. Il secondo di grazia lo controlla `catchable()`, che
+  è la stessa funzione usata dal render e dall'handler del click — così il
+  tasto non può comparire prima di quando la mossa è accettata.
+- **Non si chiude con una carta azione.** Se ti resta una carta sola e non è un
+  numero, quella carta **non si può giocare**: te la tieni e peschi finché non
+  esce un numero. Vale per NO!, Rivela, +2, +4, Jolly, Armageddon **e anche per
+  il Giullare**, che per tutto il resto conta come carta numero. Vale pure fuori
+  turno: non si chiude annullando con un NO!, quindi se a lei resta solo quello
+  la contesa non si apre nemmeno (`canSayNo`).
+- **Pescare**: si tocca il mazzo, **una volta sola per turno**, e poi decidi tu.
+  Il turno non si chiude da solo nemmeno se la carta pescata è inutile: puoi
+  giocare quella, oppure un'altra che avevi già, oppure passare con il tasto
+  **Passa**.
 
 Mazzo: 108 carte classiche + 2 Armageddon + 2 Giullare = **112**.
 
-Due punti che ho deciso io e che vanno confermati con Patrizio prima di
+Tre punti che ho deciso io e che vanno confermati con Patrizio prima di
 darli per buoni:
 
 1. Nell'Armageddon lui ha descritto solo il caso in cui l'avversaria pesca il
@@ -81,12 +94,24 @@ darli per buoni:
 2. Che annullare con il NO! costi il turno è una mia scelta.
 3. Che la catena di NO! si risolva a parità (dispari annulla, pari no) è una mia
    scelta: lui ha detto solo che un NO! si può negare con un NO!.
-4. Che dopo aver pescato si possa giocare **solo** la carta appena pescata, e non
-   un'altra qualsiasi, è la regola dell'Uno normale — ma non l'abbiamo detta.
+
+Un punto che invece **è stato confermato** e non va rimesso in discussione: dopo
+aver pescato si può giocare **qualunque** carta giocabile, non solo quella
+appena pescata. L'Uno normale direbbe il contrario; qui no.
+
+C'è un caso che nessuno ha ancora deciso: il **Giullare dichiarato come 7 o 0**
+con la regola 7-0 accesa. Oggi **non** fa scambiare le mani (lo scambio guarda
+`c.rank`, che il Giullare non ha). Se salta fuori giocando, chiedere.
 
 Le regole opzionali (cumulo +2/+4, pesca finché non puoi, 7-0, il NO! che ferma
 anche le carte pesca, carte speciali sì/no) si accendono nella lobby e vivono in
 `S.opts`.
+
+Sulla **7-0** c'è una trappola già presa una volta: lo scambio delle mani va
+fatto **solo se a chi gioca restano carte**. Chiudendo con un 7 (o uno 0) lo
+scambio metteva in mano al vincitore la mano piena dell'altra e all'altra la
+mano vuota: nessuna delle due chiudeva più, `endTurn` non vedeva mai una mano a
+zero e la partita si piantava lì.
 
 ## Come sono fatte le carte
 
@@ -147,8 +172,11 @@ Non c'è un server. Si usa **ntfy.sh**, un servizio pubblico di messaggistica ch
 non chiede registrazione. La riga `const RELAY = 'ntfy.sh'` in cima allo script è
 l'unico punto da cambiare per usarne un altro.
 
-- **Si pubblica** con `fetch(..., {mode:'no-cors'})`: la risposta non si può
-  leggere, ma così i CORS non c'entrano niente.
+- **Si pubblica** con una `fetch` POST normale. ntfy risponde con
+  `Access-Control-Allow-Origin: *`, e il corpo è testo semplice senza header
+  aggiunti, quindi è una richiesta "simple" e il browser non fa il preflight.
+  **La risposta va letta**: è l'unico modo per accorgersi di un 429 (vedi la
+  quota, qui sotto).
 - **Si ascolta** con una WebSocket (`wss://ntfy.sh/<topic>/ws?since=10h`), che ai
   CORS non è soggetta.
 - Ogni messaggio è **lo stato completo della partita** in JSON (~1 KB). Vince
@@ -162,11 +190,37 @@ l'unico punto da cambiare per usarne un altro.
 - **Battito**: se per 9 secondi non passa niente si manda un messaggino con il
   solo numero di versione; chi è avanti rimanda la partita intera. Senza questo,
   una mossa persa lascerebbe i due telefoni fermi ad aspettarsi a vicenda.
-  Mentre si è in lobby in attesa dell'ospite si ripubblica lo stato intero ogni
-  12 secondi, così l'invito non scade.
+
+### La quota è la cosa più facile da rompere
+
+**ntfy.sh regala 250 messaggi ogni 12 ore, contati per indirizzo IP**
+(`curl https://ntfy.sh/v1/account` li mostra, con quanti ne restano). Se siete
+sullo stesso wifi l'IP è uno solo e la quota è una sola per tutti e due. Sono
+pochissimi, e una volta finiti si continua a **ricevere** ma non si manda più
+niente: ricevere non costa, quindi il pallino resta verde mentre ogni mossa
+finisce nel cestino. È il guasto che ha rotto il gioco la prima volta, e per
+com'era fatto il codice era invisibile: la POST era in `no-cors` e il 429 non si
+poteva leggere. Da qui due regole:
+
+1. **Non aggiungere messaggi periodici**, e se ne tocchi uno guarda quanto costa
+   all'ora. Il battito e il rinfresco dell'invito **rallentano da soli** finché
+   non succede niente (`BEAT` 9→20→45→90→180 s, `INVITE` 15→30→60→120 s) e
+   tornano svelti solo quando succede qualcosa di vero: una mossa (`commit`), uno
+   stato nuovo dall'altra (`onRemote`), un topic nuovo (`Net.start`). Il pezzo che
+   tiene su tutto è `beatStep`. Attenzione: un battito che arriva **con la stessa
+   versione** rinfresca `lastSync` ma **non** azzera `beatStep` — se lo azzerasse,
+   i due telefoni si terrebbero svegli a vicenda per sempre, che è esattamente
+   quello che succedeva prima.
+2. **Il 429 deve restare visibile.** `Net.setFull` mette il pallino rosso e lo
+   dice ("relay pieno: le mosse non partono"). Si sblocca da solo al primo
+   messaggio che passa, quindi anche solo col battito.
+
+Se 250 diventano stretti: un account gratuito su ntfy.sh alza il limite ed è per
+utente invece che per IP (token nell'header `Authorization` sulla POST e in
+`?auth=` sulla WebSocket), oppure si cambia `RELAY`.
 
 **Limite da rispettare: 4096 byte per messaggio.** Oggi il più grande misura
-~950 byte, ma se aggiungi campi allo stato controlla che il test lo stampi ancora
+~1 KB, ma se aggiungi campi allo stato controlla che il test lo stampi ancora
 sotto soglia. `Net.send` rifiuta i messaggi oltre 3900 byte.
 
 Lo stato locale sta in `localStorage` (`uno_me`, `uno_game`), così si riprende
@@ -218,8 +272,9 @@ l'Angioletto, scegliere quale carta rivelare) sono modellate come **fasi**:
 La fase `cancel` si porta dietro `orig`/`origBy`/`choice` (la carta contestata) e
 `depth` (quanti NO! sono stati giocati finora), perché la catena di NO! si
 risolve alla fine guardando la parità di `depth`.
-`S.drawn` è la carta appena pescata: finché non è `null` il turno non è finito,
-`playable()` lascia giocare solo quella, e `doDraw` rifiuta una seconda pescata. Finché c'è una fase attiva il turno non avanza e
+`S.drawn` è la carta appena pescata, e vuol dire "in questo turno ho già
+pescato": finché non è `null` il turno non è finito e `doDraw` rifiuta una
+seconda pescata, ma **non limita più cosa puoi giocare**. Finché c'è una fase attiva il turno non avanza e
 `playable()` ritorna sempre `false`. Chi deve agire è indicato dentro la fase,
 non da `S.turn`.
 
@@ -240,9 +295,15 @@ telefoni), sostituisce WebSocket e `fetch` con un relay finto in memoria
   riconnessione deve riallinearsi
 - **mossa persa**: si butta via un messaggio in volo e si controlla che il
   battito ricuci da solo
+- **traffico da fermi**: sessanta secondi senza toccare niente, partendo dal caso
+  peggiore (battito appena azzerato), contando quanti messaggi partono. Il tetto
+  è 8: col vecchio battito fisso erano una quindicina. È la prova che tiene
+  lontana la quota di ntfy, quindi se la tocchi sappi cosa stai facendo.
+- **relay pieno**: il relay finto risponde 429 (`FULL['on']`) e il gioco deve
+  diventare rosso e dirlo, poi tornare verde da solo quando il relay riparte
 
 Stampa anche la dimensione del messaggio più grande. Va fatto girare dopo ogni
-modifica al motore o allo stato.
+modifica al motore, allo stato o al battito.
 
 `test_rules.py` guarda invece le **regole**, ed è lì che va aggiunta una prova
 quando si tocca il motore. Una partita a mosse casuali non garantisce niente su
